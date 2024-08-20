@@ -8,13 +8,13 @@ ACQ2206_2X482_MGT508.Add(tree, 'ACQ')
 tree.ACQ.ACQ_ADDRESS.record = 'acq2206-014'
 tree.ACQ.MGT_ADDRESS.record = 'mgt508-005'
 tree.ACQ.TRIGGER.SOURCE.record = 'STRIG'
-# tree.ACQ.FREQUENCY.record = 8_675_309
+tree.ACQ.FREQUENCY.record = '25M'
 tree.ACQ.SAMPLES.record = 25_000_000
 
-tree.ACQ.INPUTS.INPUT_01.on = False
-tree.ACQ.INPUTS.INPUT_05.on = False
-tree.ACQ.INPUTS.INPUT_10.on = False
-tree.ACQ.INPUTS.INPUT_20.on = False
+#tree.ACQ.INPUTS.INPUT_01.on = False
+#tree.ACQ.INPUTS.INPUT_05.on = False
+#tree.ACQ.INPUTS.INPUT_10.on = False
+#tree.ACQ.INPUTS.INPUT_20.on = False
 
 tree.write()
 tree.close()

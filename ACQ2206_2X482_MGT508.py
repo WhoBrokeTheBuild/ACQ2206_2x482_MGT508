@@ -54,10 +54,21 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
             'options': ('no_write_shot',),
         },
         {
+            'path': ':RUNNING',
+            'type': 'numeric',
+            # 'on': False,
+            'options': ('no_write_model',),
+        },
+        {
             'path': ':FREQUENCY',
-            'type': 'text',
+            'type': 'any',
             'value': '25M',
             'options': ('no_write_shot',),
+        },
+        {
+            'path': ':FREQUENCY:ACTUAL',
+            'type': 'numeric',
+            'options': ('no_write_model',),
         },
         {
             'path':':SAMPLES',
@@ -66,19 +77,13 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
             'options':('no_write_shot',),
         },
         {
-            'path': ':INIT_ACTION',
-            'type': 'action',
-            'valueExpr': "Action(Dispatch('MDSIP_SERVER','INIT',50,None),Method(None,'INIT',head))",
-            'options': ('no_write_shot',)
+            'path': ':SAMPLES:ACTUAL',
+            'type': 'numeric',
+            'options': ('no_write_model',),
         },
         {
             'path': ':TRIGGER',
             'type': 'structure',
-        },
-        {
-            'path': ':TRIGGER:TIMESTAMP', # Or TIME_OF_DAY
-            'type': 'numeric',
-            'options': ('write_shot',),
         },
         {
             'path': ':TRIGGER:SOURCE',
@@ -87,10 +92,49 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
             'options': ('no_write_shot',),
         },
         {
-            'path': ':RUNNING',
+            'path': ':TRIGGER:TIMESTAMP',
             'type': 'numeric',
-            # 'on': False,
+            'options': ('write_shot',),
+        },
+        {
+            'path': ':TRIGGER:TIME_OF_DAY',
+            'type': 'text',
+            'options': ('write_shot',),
+        },
+        {
+            'path': ':TEMPERATURE',
+            'type': 'structure',
+        },
+        {
+            'path': ':TEMPERATURE:MAINBOARD',
+            'type': 'numeric',
             'options': ('no_write_model',),
+        },
+        {
+            'path': ':TEMPERATURE:SITE1',
+            'type': 'numeric',
+            'options': ('no_write_model',),
+        },
+        {
+            'path': ':TEMPERATURE:SITE3',
+            'type': 'numeric',
+            'options': ('no_write_model',),
+        },
+        {
+            'path': ':TEMPERATURE:SITEE',
+            'type': 'numeric',
+            'options': ('no_write_model',),
+        },
+        {
+            'path': ':TEMPERATURE:ZYNQ',
+            'type': 'numeric',
+            'options': ('no_write_model',),
+        },
+        {
+            'path': ':INIT_ACTION',
+            'type': 'action',
+            'valueExpr': "Action(Dispatch('MDSIP_SERVER','INIT',50,None),Method(None,'INIT',head))",
+            'options': ('no_write_shot',)
         },
         {
             'path': ':EVENT_NAME',
@@ -192,6 +236,12 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
         uut = acq400_hapi.factory(acq_address)
         mgt = acq400_hapi.Mgt508(mgt_address)
 
+        # Wait for the device to be in a clean, IDLE state
+        while acq400_hapi.pv(uut.s0.CONTINUOUS_STATE) != 'IDLE':
+            uut.s0.CONTINUOUS = '0'
+            self.dprint(1, f'WARNING: requesting {uut.uut} to stop')
+            time.sleep(1)
+
         # Configure the aggregator to send data do the MGT? We think?
         uut.cA.aggregator = 'sites=1,2,3,4 spad=0 on'
 
@@ -207,7 +257,6 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
         # have to check the channel_mapping for the order, and then unpack the data
         channel_mapping = list(map(int, uut.s0.channel_mapping.split(',')))
         channel_count = len(channel_mapping)
-        sample_count = int(self.SAMPLES.data())
 
         # Fetch the coefficients and offsets for each channel
         self.dprint(1, f'Fetching calibration')
@@ -222,22 +271,22 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
 
             self.dprint(1, f'Calibration for INPUT_{chan_index:02}, coeff {coeff}, offset {offset}')
 
-        # Wait for the device to be in a clean, IDLE state
-        while acq400_hapi.pv(uut.s0.CONTINUOUS_STATE) != 'IDLE':
-            uut.s0.CONTINUOUS = '0'
-            self.dprint(1, f'WARNING: requesting {uut.uut} to stop')
-            time.sleep(1)
-
         # We need to determine the timing highway based on the trigger source
         # The two highways are d0 and d1
         trigger_source = str(self.TRIGGER.SOURCE.data()).upper()
+        self.dprint(1, f'Setting trigger source to {trigger_source}')
+
         if trigger_source in self._TRIGGER_SOURCE_D0_OPTIONS:
             trg_dx = 'd0'
+            uut.s0.SIG_SRC_TRG_0 = trigger_source
         elif trigger_source in self._TRIGGER_SOURCE_D1_OPTIONS:
             trg_dx = 'd1'
+            uut.s0.SIG_SRC_TRG_1 = trigger_source
 
         role = 'master'
         frequency = str(self.FREQUENCY.data())
+
+        # TODO: Parse existing sync_role to see if we need to run it again
 
         # Ideally we wouldn't do this every time, but there shouldn't be any harm other
         # than it taking a little while to run
@@ -246,29 +295,23 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
         uut.s0.sync_role = sync_role
 
         # Query the actual frequency the digitizer is running at, in case our setting didn't take
-        frequency = uut.s0.sync_role.split()[1]
-        if frequency.endswith('K'):
-            frequency = int(frequency[:-1]) * 1_000
-        elif frequency.endswith('M'):
-            frequency = int(frequency[:-1]) * 1_000_000
-        elif frequency.endswith('G'):
-            frequency = int(frequency[:-1]) * 1_000_000_000
-        else:
-            frequency = int(frequency)
+        actual_frequency = int(uut.s0.SIG_CLK_MB_SET.split()[1]) # Is this a safe knob to read from?
+        self.FREQUENCY.ACTUAL.record = actual_frequency
+        self.dprint(1, f'Queried frequency is {actual_frequency}')
 
-        clock_period = float(1.0 / frequency)
-        self.dprint(1, f'Queried frequency is {frequency}')
-
-        self.dprint(1, f'Setting trigger source to {trigger_source}')
-        if trg_dx == 'd0':
-            uut.s0.SIG_SRC_TRG_0 = trigger_source
-        elif trg_dx == 'd1':
-            uut.s0.SIG_SRC_TRG_1 = trigger_source
+        # Determine the time between each sample in seconds
+        clock_period = float(1.0 / actual_frequency)
 
         # The MGT508 deals in "buffers", not in "samples", so we need to convert our
         # (sample count * sample size) into bytes, and then into megabytes for some reason
+        sample_count = int(self.SAMPLES.data())
         total_bytes = sample_count * channel_count * uut.data_size()
         total_mb = int(math.ceil(total_bytes / 1_000_000))
+
+        # Record the actual number of samples that we're getting, which is possibly more than was requested
+        actual_sample_count = int(((total_mb * 1_000_000) / uut.data_size()) / channel_count)
+        self.SAMPLES.ACTUAL.record = actual_sample_count
+        self.dprint(1, f'Queried sample count is {actual_sample_count}')
 
         self.dprint(1, f'Setting capture length to {total_mb}MB')
         mgt.set_capture_length(total_mb)
@@ -285,6 +328,10 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
                 pull_address = (mgt_address, acq400_hapi.Mgt508Ports.PULL)
                 self.dprint(1, f'Connecting to {pull_address} to initiate PULL')
                 s.connect(pull_address)
+
+                # Set the socket timeout to 1h
+                self.dprint(1, f'Setting the PULL socket timeout to 24h')
+                s.settimeout(60 * 60 * 24)
 
                 # Might be problematic on some systems
                 s.setblocking(False)
@@ -312,10 +359,38 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
                             finished = True
                             break
 
-            uut.s0.CONTINUOUS = '0'
-
             if not finished:
                 raise Exception('Failed to PULL the whole data with the MGT508')
+            
+            try:
+                # Record the approximate time of the trigger
+                trigger_time = time.time() - (clock_period * actual_sample_count)
+                self.TRIGGER.TIMESTAMP.record = trigger_time
+                self.TRIGGER.TIME_OF_DAY.record = datetime.fromtimestamp(trigger_time).isoformat()
+
+                # Stop the data capture
+                uut.s0.CONTINUOUS = '0'
+
+                # Query temperatures for debugging, done after the PULL to get the temperature under load
+                sys_temp = uut.s0.SYS_TEMP
+                for sensor in sys_temp.split(','):
+                    name, temp = sensor.split('=')
+                    temp = float(temp)
+
+                    if name == 'mainboard':
+                        self.TEMPERATURE.MAINBOARD.record = temp
+                    elif name == 'SITE1':
+                        self.TEMPERATURE.SITE1.record = temp
+                    elif name == 'SITE3':
+                        self.TEMPERATURE.SITE3.record = temp
+                    elif name == 'SITEE':
+                        self.TEMPERATURE.SITEE.record = temp
+                    elif name == 'ZYNQ':
+                        self.TEMPERATURE.ZYNQ.record = temp
+
+            except Exception as e:
+                # Don't let any errors here cause issues with the actual data collection
+                print(e)
 
             # We download the data from the MGT508, not from the ACQ, so we need to connect to that
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -348,13 +423,13 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
 
             # All channels share the same dimension
             begin = 0
-            end = clock_period * (sample_count - 1)
+            end = clock_period * (actual_sample_count - 1)
             dim = MDSplus.Dimension(None, MDSplus.Range(begin, end, clock_period))
 
             # The ACQ482 has 14-bit accuracy, but thankfully they get padded up to 16-bit/2-bytes
             # per sample before transmission. We then unpack and reshape the buffer into data[channel][sample]
             data = numpy.frombuffer(buffer, dtype='int16')
-            data = data.reshape((sample_count, channel_count,))
+            data = data.reshape((actual_sample_count, channel_count,))
 
             # We need follow the channel mapping in order to get the correct data for each channel
             # otherwise we might write the data for channel 5 into INPUT_03 by accident
