@@ -18,8 +18,7 @@ for i in range(32):
     x = node.data()
     y = node.dim_of().data()
 
-    # TODO: Parse FREQUENCY
-    one_sine = 9_000_000 // 1000 # The sine wave is at 1KHz
+    one_sine = int(t.ACQ.FREQUENCY.ACTUAL.data()) // 1000 # The sine wave is at 1KHz
     x1 = x[ : one_sine ]
     y1 = y[ : one_sine ]
 

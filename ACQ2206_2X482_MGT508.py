@@ -277,22 +277,41 @@ class ACQ2206_2X482_MGT508(MDSplus.Device):
         self.dprint(1, f'Setting trigger source to {trigger_source}')
 
         if trigger_source in self._TRIGGER_SOURCE_D0_OPTIONS:
-            trg_dx = 'd0'
+            trg_dx = 'TRG:DX=d0'
             uut.s0.SIG_SRC_TRG_0 = trigger_source
         elif trigger_source in self._TRIGGER_SOURCE_D1_OPTIONS:
-            trg_dx = 'd1'
+            trg_dx = 'TRG:DX=d1'
             uut.s0.SIG_SRC_TRG_1 = trigger_source
 
         role = 'master'
         frequency = str(self.FREQUENCY.data())
 
-        # TODO: Parse existing sync_role to see if we need to run it again
+        # Everything after the ; should not be trusted
+        current_sync_role_parts = uut.s0.sync_role.split(';')[0].split(maxsplit=3)
 
-        # Ideally we wouldn't do this every time, but there shouldn't be any harm other
-        # than it taking a little while to run
-        sync_role = f'{role} {frequency} TRG:DX={trg_dx}'
-        self.dprint(1, f'Setting sync_role="{sync_role}"')
-        uut.s0.sync_role = sync_role
+        # Positional Arguments
+        current_role = current_sync_role_parts[0]
+        current_frequency = current_sync_role_parts[1]
+
+        # Keyword Arguments
+        current_arguments = []
+        if len(current_sync_role_parts) > 2:
+            current_arguments = current_sync_role_parts[2].split()
+
+        changed = (
+            role != current_role or
+            frequency != current_frequency or
+            trg_dx not in current_arguments
+        )
+
+        # If any part of the sync_role has changed, update it
+        # This takes some time, and triggers a clock retraining which takes even more time
+        if changed:
+            sync_role = f'{role} {frequency} {trg_dx}'
+            self.dprint(1, f'Setting sync_role="{sync_role}"')
+            uut.s0.sync_role = sync_role
+        else:
+            self.dprint(1, f'Skipping sync_role, already configured')
 
         # Query the actual frequency the digitizer is running at, in case our setting didn't take
         actual_frequency = int(uut.s0.SIG_CLK_MB_SET.split()[1]) # Is this a safe knob to read from?
